@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Expiry Inventory Portal</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f7fb; margin:0; padding:20px; }
+    .container { max-width: 1400px; margin:auto; background: #fff; padding:25px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.1); }
+    h1, h2 { text-align:center; color:#333; margin-bottom:20px; }
+    .upload-box { margin-bottom:20px; text-align:center; }
+    input, button, select { padding:10px; border:1px solid #ccc; border-radius:6px; font-size:14px; }
+    button { background:#007bff; color:white; border:none; cursor:pointer; transition:0.3s; }
+    button:hover { background:#0056b3; }
+    .input-row { display:flex; gap:15px; margin-bottom:20px; flex-wrap:wrap; }
+    .input-row input, .input-row select { flex:1; min-width:150px; }
+    table { width:100%; border-collapse: collapse; margin-top:15px; table-layout:fixed; }
+    th, td { padding:12px; border:1px solid #ddd; text-align:left; word-wrap:break-word; }
+    th { background: #f1f1f1; cursor:pointer; }
+    td button.delete-btn { background:#dc3545; }
+    td button.delete-btn:hover { background:#b02a37; }
+    td button.edit-btn { background:#28a745; margin-right:5px; }
+    td button.edit-btn:hover { background:#1e7e34; }
+    .footer { margin-top:15px; text-align:right; font-weight:bold; font-size:16px; color:#444; }
+    .expired { color:red; font-weight:bold; }
+    .near-expiry { color:orange; font-weight:bold; }
+    .share-btn { background:#17a2b8;margin-top:10px; }
+    .share-btn:hover { background:#117a8b; }
+    .notification { padding:10px; background:#fff4e5; border:1px solid #ffc107; border-radius:5px; margin-bottom:10px; font-weight:bold; color:#856404; }
+    .pagination { margin-top:10px; text-align:center; }
+    .pagination button { margin:2px; background:#6c757d; color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer; }
+    .pagination button.active { background:#007bff; }
+    #vendorReport table { width:100%; border-collapse: collapse; margin-top:10px; }
+    #vendorReport th, #vendorReport td { padding:10px; border:1px solid #ccc; text-align:left; }
+    #vendorReport th { background-color:#f8f8f8; }
+    .print-btn { margin-top:10px; background:#6c757d; }
+    .print-btn:hover { background:#5a6268; }
+    .log { margin-top:10px; background: #eef; padding:10px; border:1px solid #99c; font-size:13px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Expiry Inventory Portal</h1>
+
+    <div class="upload-box" id="uploadSection">
+      <input type="file" id="uploadExcel" accept=".xlsx, .xls" />
+      <button onclick="clearDatabase()">Clear & Upload New Excel</button>
+      <p style="color:gray; font-size:13px;">Upload only once. Data will be saved for future visits.</p>
+    </div>
+
+    <div class="notification" id="expiryNotification">Please upload an Excel file to begin.</div>
+
+    <div class="input-row">
+      <input type="text" id="itemCode" placeholder="Enter Item Code or Barcode" />
+      <input type="text" id="description" placeholder="Description" readonly />
+      <input type="text" id="vendor" placeholder="Vendor" readonly />
+      <input type="number" id="cost" placeholder="Cost" readonly />
+      <input type="date" id="expiry" />
+      <input type="number" id="qty" placeholder="Qty" />
+      <button onclick="addItem()">Add</button>
+    </div>
+
+    <button class="share-btn" onclick="shareTable()">Share Table (View-Only)</button>
+
+    <table>
+      <thead>
+        <tr>
+          <th onclick="sortTable('code')">Item Code / Barcode</th>
+          <th onclick="sortTable('desc')">Description</th>
+          <th onclick="sortTable('vendor')">Vendor</th>
+          <th onclick="sortTable('cost')">Cost</th>
+          <th onclick="sortTable('expiry')">Expiry Date</th>
+          <th onclick="sortTable('days')">Days Left</th>
+          <th onclick="sortTable('qty')">Qty</th>
+          <th onclick="sortTable('total')">Total</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="inventoryTable"></tbody>
+    </table>
+
+    <div class="pagination" id="pagination"></div>
+    <div class="footer" id="grandTotal">Grand Total: 0.00</div>
+
+    <hr />
+    <h2>Supplier/Vendor-wise Report</h2>
+    <div id="vendorReport"></div>
+    <button class="print-btn" onclick="printVendorReport()">Print Vendor Report</button>
+
+    <div class="log" id="debugLog"></div>
+  </div>
+
+  <script>
+    let db = [], tableData = [], editRow = null;
+    let currentPage = 1, itemsPerPage = 50;
+    let isViewOnly = false;
+
+    const logEl = document.getElementById("debugLog");
+    function log(...args) {
+      // Commented out to prevent showing logs under print button
+      // console.log(...args);
+      // logEl.textContent += args.map(a => {
+      //   try { return JSON.stringify(a); } catch(e) { return String(a); }
+      // }).join(" ") + "\n";
+    }
+
+    // Load saved data
+    if (localStorage.getItem("expiryDB")) {
+      try { db = JSON.parse(localStorage.getItem("expiryDB")); /*log("Loaded expiryDB:", db);*/ }
+      catch(e) { /*log("Error loading expiryDB", e);*/ }
+    }
+    if (localStorage.getItem("portalData")) {
+      try { tableData = JSON.parse(localStorage.getItem("portalData")); /*log("Loaded portalData:", tableData);*/ }
+      catch(e) { /*log("Error loading portalData", e);*/ }
+    }
+
+    document.getElementById("uploadExcel")?.addEventListener("change", function(e) {
+      //log("Upload change event", e);
+      const file = e.target.files[0];
+      //log("Selected file:", file);
+      if (!file) {
+        alert("No file selected.");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        //log("FileReader onload", evt);
+        try {
+          const arr = evt.target.result;
+          const workbook = XLSX.read(arr, { type: "array" });
+          //log("Workbook:", workbook);
+          // Try specific sheet name or fallback
+          let sheet = workbook.Sheets["Sheet1 (2)"];
+          if (!sheet) {
+            sheet = workbook.Sheets[workbook.SheetNames[0]];
+            //log("Fallback sheet:", workbook.SheetNames[0]);
+          }
+          if (!sheet) {
+            alert("No sheet found in Excel file!");
+            return;
+          }
+          // Convert to JSON rows (array-of-arrays)
+          const raw = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+          //log("Raw rows:", raw);
+          db = [];
+          raw.forEach((row, i) => {
+            // skip header or empty rows
+            if (i === 0) return;
+            if (!row[0] && !row[1]) return;
+            const itemCode = row[0]?.toString().trim() || "";
+            const barcode = row[1]?.toString().trim() || "";
+            const cost = row[2] != null ? parseFloat(row[2]) : 0;
+            const desc = row[3]?.toString().trim() || "";
+            const vendor = row[4]?.toString().trim() || "";
+            db.push({
+              ItemCode: itemCode,
+              Barcode: barcode,
+              Cost: cost,
+              Description: desc,
+              Vendor: vendor
+            });
+          });
+          //log("Parsed DB:", db);
+          localStorage.setItem("expiryDB", JSON.stringify(db));
+          document.getElementById("uploadSection").style.display = "none";
+          updateTable();
+        } catch (err) {
+          console.error("Error processing file:", err);
+          alert("Error processing file: " + err.message);
+          //log("Error:", err);
+        }
+      };
+      reader.onerror = function(err) {
+        console.error("FileReader error:", err);
+        alert("Failed to read file: " + err.message);
+        //log("FileReader error:", err);
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    document.getElementById("itemCode").addEventListener("input", function() {
+      const code = this.value.trim().toLowerCase();
+      const item = db.find(x => {
+        return (x.ItemCode?.toLowerCase() === code) || (x.Barcode?.toLowerCase() === code);
+      });
+      if (item) {
+        document.getElementById("description").value = item.Description || "";
+        document.getElementById("vendor").value = item.Vendor || "";
+        document.getElementById("cost").value = item.Cost != null ? item.Cost : "";
+      } else {
+        document.getElementById("description").value = "";
+        document.getElementById("vendor").value = "";
+        document.getElementById("cost").value = "";
+      }
+    });
+
+    function daysLeft(expiry) {
+      const d = new Date(expiry);
+      const now = new Date();
+      const diff = d - now;
+      return Math.ceil(diff / (1000 * 60 * 60 * 24));
+    }
+
+    function addItem() {
+      if (isViewOnly) {
+        alert("View only mode!");
+        return;
+      }
+      const code = document.getElementById("itemCode").value;
+      const desc = document.getElementById("description").value;
+      const vendor = document.getElementById("vendor").value;
+      const cost = parseFloat(document.getElementById("cost").value) || 0;
+      const expiry = document.getElementById("expiry").value;
+      const qty = parseFloat(document.getElementById("qty").value) || 0;
+
+      if (!code || !desc || !vendor || !expiry || !qty) {
+        alert("Please fill all fields.");
+        return;
+      }
+
+      const days = daysLeft(expiry);
+      const total = (cost * qty).toFixed(2);
+
+      const obj = { code, desc, vendor, cost, expiry, qty, days, total };
+      if (editRow !== null) {
+        tableData[editRow] = obj;
+        editRow = null;
+      } else {
+        tableData.push(obj);
+      }
+
+      localStorage.setItem("portalData", JSON.stringify(tableData));
+      resetInputs();
+      updateTable();
+    }
+
+    function resetInputs() {
+      document.getElementById("itemCode").value = "";
+      document.getElementById("description").value = "";
+      document.getElementById("vendor").value = "";
+      document.getElementById("cost").value = "";
+      document.getElementById("expiry").value = "";
+      document.getElementById("qty").value = "";
+    }
+
+    function updateTable(page = 1) {
+      currentPage = page;
+      const tbody = document.getElementById("inventoryTable");
+      tbody.innerHTML = "";
+
+      const start = (page - 1) * itemsPerPage;
+      const end = start + itemsPerPage;
+      const pageData = tableData.slice(start, end);
+
+      let expiredCount = 0, nearCount = 0;
+      let grandTotal = 0;
+
+      pageData.forEach((item, idx) => {
+        const cls = (item.days <= 0) ? "expired" : (item.days < 10 ? "near-expiry" : "");
+        if (item.days <= 0) expiredCount++;
+        else if (item.days < 10) nearCount++;
+        grandTotal += parseFloat(item.total);
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${item.code}</td>
+          <td>${item.desc}</td>
+          <td>${item.vendor}</td>
+          <td>${item.cost.toFixed(2)}</td>
+          <td>${item.expiry}</td>
+          <td class="${cls}">${item.days}</td>
+          <td>${item.qty}</td>
+          <td>${item.total}</td>
+          <td>
+            <button class="edit-btn" onclick="editItem(${start + idx})">Edit</button>
+            <button class="delete-btn" onclick="deleteItem(${start + idx})">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById("grandTotal").textContent = "Grand Total: " + grandTotal.toFixed(2);
+
+      renderPagination();
+      renderVendorReport();
+      updateNotification(expiredCount, nearCount);
+    }
+
+    function updateNotification(expiredCount, nearCount) {
+      const notif = document.getElementById("expiryNotification");
+      if (tableData.length === 0) {
+        notif.textContent = "Please upload an Excel file to begin.";
+      } else {
+        let msg = "";
+        if (expiredCount > 0) msg += `⚠️ Expired items: ${expiredCount}. `;
+        if (nearCount > 0) msg += `⏳ Near expiry items (less than 10 days): ${nearCount}.`;
+        if (!msg) msg = "All items are valid.";
+        notif.textContent = msg;
+      }
+    }
+
+    function editItem(idx) {
+      if (isViewOnly) {
+        alert("View only mode!");
+        return;
+      }
+      const item = tableData[idx];
+      if (!item) return;
+      editRow = idx;
+      document.getElementById("itemCode").value = item.code;
+      document.getElementById("description").value = item.desc;
+      document.getElementById("vendor").value = item.vendor;
+      document.getElementById("cost").value = item.cost;
+      document.getElementById("expiry").value = item.expiry;
+      document.getElementById("qty").value = item.qty;
+    }
+
+    function deleteItem(idx) {
+      if (isViewOnly) {
+        alert("View only mode!");
+        return;
+      }
+      if (!confirm("Delete this entry?")) return;
+      tableData.splice(idx, 1);
+      localStorage.setItem("portalData", JSON.stringify(tableData));
+      updateTable(currentPage);
+    }
+
+    function sortTable(field) {
+      if (tableData.length === 0) return;
+
+      let sorted = [...tableData];
+      sorted.sort((a,b) => {
+        if (field === "cost" || field === "qty" || field === "days" || field === "total") {
+          return parseFloat(a[field]) - parseFloat(b[field]);
+        }
+        if (field === "expiry") {
+          return new Date(a.expiry) - new Date(b.expiry);
+        }
+        return a[field].toString().localeCompare(b[field].toString());
+      });
+
+      // Toggle sort order by reversing if already sorted ascending
+      if (JSON.stringify(sorted) === JSON.stringify(tableData)) {
+        sorted.reverse();
+      }
+      tableData = sorted;
+      localStorage.setItem("portalData", JSON.stringify(tableData));
+      updateTable(1);
+    }
+
+    function renderPagination() {
+      const pagDiv = document.getElementById("pagination");
+      pagDiv.innerHTML = "";
+      const pageCount = Math.ceil(tableData.length / itemsPerPage);
+      if (pageCount <= 1) return;
+
+      for(let i=1; i <= pageCount; i++) {
+        const btn = document.createElement("button");
+        btn.textContent = i;
+        if (i === currentPage) btn.classList.add("active");
+        btn.onclick = () => updateTable(i);
+        pagDiv.appendChild(btn);
+      }
+    }
+
+    // Clear DB and data for new upload
+    function clearDatabase() {
+      if (!confirm("This will clear all existing data and upload new Excel. Proceed?")) return;
+      db = [];
+      tableData = [];
+      localStorage.removeItem("expiryDB");
+      localStorage.removeItem("portalData");
+      document.getElementById("uploadSection").style.display = "block";
+      document.getElementById("expiryNotification").textContent = "Please upload an Excel file to begin.";
+      updateTable();
+    }
+
+    // Share Table: creates view-only URL with data encoded
+    function shareTable() {
+      if (tableData.length === 0) {
+        alert("No data to share!");
+        return;
+      }
+      const encoded = btoa(encodeURIComponent(JSON.stringify(tableData)));
+      const url = `${location.origin}${location.pathname}?data=${encoded}`;
+      prompt("Share this URL (read-only view):", url);
+    }
+
+    // On load, check if data in URL param for read-only mode
+    function loadFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const encoded = params.get("data");
+      if (encoded) {
+        try {
+          const decoded = decodeURIComponent(atob(encoded));
+          const arr = JSON.parse(decoded);
+          if (Array.isArray(arr)) {
+            tableData = arr;
+            isViewOnly = true;
+            document.getElementById("uploadSection").style.display = "none";
+            document.querySelectorAll("input, button").forEach(el => el.disabled = true);
+            updateTable();
+            document.getElementById("expiryNotification").textContent = "View-only mode (shared data). Editing disabled.";
+          }
+        } catch(e) {
+          console.warn("Failed to load shared data:", e);
+        }
+      } else {
+        updateTable();
+      }
+    }
+
+    // Vendor-wise report generation with expired and near expiry counts
+    function renderVendorReport() {
+      const container = document.getElementById("vendorReport");
+      if (tableData.length === 0) {
+        container.innerHTML = "<p>No data to generate report.</p>";
+        return;
+      }
+      const vendorMap = {};
+      let expiredCount = 0;
+      let nearExpiryCount = 0;
+
+      tableData.forEach(item => {
+        if (!vendorMap[item.vendor]) vendorMap[item.vendor] = { count: 0, total: 0 };
+        vendorMap[item.vendor].count += 1;
+        vendorMap[item.vendor].total += parseFloat(item.total) || 0;
+
+        if (item.days <= 0) expiredCount++;
+        else if (item.days < 10) nearExpiryCount++;
+      });
+
+      let html = `<table>
+        <thead>
+          <tr><th>Vendor</th><th>Total Items</th><th>Total Value</th></tr>
+        </thead>
+        <tbody>`;
+      for (const v in vendorMap) {
+        html += `<tr>
+          <td>${v}</td>
+          <td>${vendorMap[v].count}</td>
+          <td>${vendorMap[v].total.toFixed(2)}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+
+      // Add expired / near expiry summary lines
+      html += `
+        <p><strong>Expired Items:</strong> ${expiredCount}</p>
+        <p><strong>Near Expiry Items (less than 10 days):</strong> ${nearExpiryCount}</p>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function printVendorReport() {
+      const reportContent = document.getElementById("vendorReport").innerHTML;
+      const newWin = window.open("");
+      newWin.document.write(`
+        <html><head><title>Vendor Report</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin:20px; }
+          table { width:100%; border-collapse: collapse; margin-bottom:20px;}
+          th, td { border:1px solid #ccc; padding:10px; text-align:left; }
+          th { background:#eee; }
+        </style>
+        </head><body>${reportContent}</body></html>`);
+      newWin.document.close();
+      newWin.focus();
+      newWin.print();
+      newWin.close();
+    }
+
+    // Initial load
+    loadFromURL();
+  </script>
+</body>
+</html>
