@@ -112,7 +112,7 @@
 
     // Fetch the Excel file from a fixed URL and parse it into `db`
     function loadDatabase() {
-      const url = 'https://raw.githubusercontent.com/your‑username/your‑repo/main/data.xlsx'; // <– **CHANGE THIS** to actual raw link
+      const url = 'https://raw.githubusercontent.com/your-username/your-repo/main/data.xlsx'; // <– **CHANGE THIS** to actual raw link
       fetch(url)
         .then(resp => {
           if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
@@ -155,237 +155,175 @@
         );
         if (item) {
           document.getElementById("description").value = item.Description || "";
-          document.getElementById("vendor").value      = item.Vendor      || "";
-          document.getElementById("cost").value        = item.Cost != null ? item.Cost : "";
-        } else {
-          document.getElementById("description").value = "";
-          document.getElementById("vendor").value      = "";
-          document.getElementById("cost").value        = "";
+          document.getElementById("vendor").value = item.Vendor || "";
+          document.getElementById("cost").value = item.Cost || "";
         }
       });
     }
 
+    // Add item to table and update
     function addItem() {
-      if (isViewOnly) { alert("View only mode!"); return; }
-      const code    = document.getElementById("itemCode").value.trim();
-      const desc    = document.getElementById("description").value;
-      const vendor  = document.getElementById("vendor").value;
-      const cost    = parseFloat(document.getElementById("cost").value) || 0;
-      const expiry  = document.getElementById("expiry").value;
-      const qty     = parseFloat(document.getElementById("qty").value) || 0;
+      const itemCode = document.getElementById("itemCode").value.trim();
+      const description = document.getElementById("description").value.trim();
+      const vendor = document.getElementById("vendor").value.trim();
+      const cost = parseFloat(document.getElementById("cost").value);
+      const qty = parseInt(document.getElementById("qty").value);
+      const expiry = document.getElementById("expiry").value;
 
-      if (!code || !desc || !vendor || !expiry || !qty) {
-        alert("Please fill all fields.");
+      if (!itemCode || !qty || !expiry || isNaN(cost)) {
+        alert("Please fill out all fields correctly!");
         return;
       }
 
-      const dLeft = daysLeft(expiry);
+      const days = daysLeft(expiry);
       const total = (cost * qty).toFixed(2);
-      const obj   = { code, desc, vendor, cost, expiry, qty, days: dLeft, total };
 
-      if (editRow !== null) {
-        tableData[editRow] = obj;
+      if (editRow) { // Edit mode
+        const rowIndex = parseInt(editRow.getAttribute("data-index"));
+        tableData[rowIndex] = { itemCode, description, vendor, cost, qty, expiry, total, days };
         editRow = null;
-      } else {
-        tableData.push(obj);
+      } else { // New entry
+        tableData.push({ itemCode, description, vendor, cost, qty, expiry, total, days });
       }
-
+      
       localStorage.setItem("portalData", JSON.stringify(tableData));
-      resetInputs();
       updateTable();
     }
 
-    function resetInputs() {
-      document.getElementById("itemCode").value     = "";
-      document.getElementById("description").value = "";
-      document.getElementById("vendor").value      = "";
-      document.getElementById("cost").value        = "";
-      document.getElementById("expiry").value      = "";
-      document.getElementById("qty").value         = "";
+    // Sort table by column
+    function sortTable(column) {
+      tableData.sort((a, b) => {
+        if (column === 'code') {
+          return a.ItemCode.localeCompare(b.ItemCode);
+        }
+        if (column === 'desc') {
+          return a.Description.localeCompare(b.Description);
+        }
+        if (column === 'vendor') {
+          return a.Vendor.localeCompare(b.Vendor);
+        }
+        if (column === 'cost') {
+          return a.Cost - b.Cost;
+        }
+        if (column === 'expiry') {
+          return new Date(a.Expiry) - new Date(b.Expiry);
+        }
+        if (column === 'days') {
+          return a.Days - b.Days;
+        }
+        if (column === 'qty') {
+          return a.Qty - b.Qty;
+        }
+        if (column === 'total') {
+          return a.Total - b.Total;
+        }
+      });
+      updateTable();
     }
 
-    function updateTable(page = 1) {
-      currentPage = page;
-      const tbody = document.getElementById("inventoryTable");
-      tbody.innerHTML = "";
+    // Update table with pagination
+    function updateTable() {
+      const start = (currentPage - 1) * itemsPerPage;
+      const end = start + itemsPerPage;
+      const paginatedData = tableData.slice(start, end);
+      
+      const tableBody = document.getElementById("inventoryTable");
+      tableBody.innerHTML = "";
 
-      const start = (page - 1) * itemsPerPage;
-      const end   = start + itemsPerPage;
-      const pageData = tableData.slice(start, end);
-
-      let expiredCount = 0, nearCount = 0;
-      let grandTotal   = 0;
-
-      pageData.forEach((item, idx) => {
-        const cls = (item.days <= 0) ? "expired" : (item.days < 10 ? "near-expiry" : "");
-        if (item.days <= 0) expiredCount++;
-        else if (item.days < 10) nearCount++;
-        grandTotal += parseFloat(item.total);
-
+      paginatedData.forEach((row, index) => {
         const tr = document.createElement("tr");
+        tr.setAttribute("data-index", start + index);
         tr.innerHTML = `
-          <td>${item.code}</td>
-          <td>${item.desc}</td>
-          <td>${item.vendor}</td>
-          <td>${item.cost.toFixed(2)}</td>
-          <td>${item.expiry}</td>
-          <td class="${cls}">${item.days}</td>
-          <td>${item.qty}</td>
-          <td>${item.total}</td>
+          <td>${row.ItemCode || ''}</td>
+          <td>${row.Description || ''}</td>
+          <td>${row.Vendor || ''}</td>
+          <td>${row.Cost.toFixed(2) || '0.00'}</td>
+          <td>${row.Expiry || ''}</td>
+          <td class="${row.Days < 0 ? 'expired' : (row.Days <= 30 ? 'near-expiry' : '')}">${row.Days}</td>
+          <td>${row.Qty}</td>
+          <td>${parseFloat(row.Total).toFixed(2)}</td>
           <td>
-            <button class="edit-btn"   onclick="editItem(${start + idx})">Edit</button>
-            <button class="delete-btn" onclick="deleteItem(${start + idx})">Delete</button>
+            <button class="edit-btn" onclick="editItem(${start + index})">Edit</button>
+            <button class="delete-btn" onclick="deleteItem(${start + index})">Delete</button>
           </td>
         `;
-        tbody.appendChild(tr);
+        tableBody.appendChild(tr);
       });
 
-      document.getElementById("grandTotal").textContent = "Grand Total: " + grandTotal.toFixed(2);
-
-      renderPagination();
-      renderVendorReport();
-      updateNotification(expiredCount, nearCount);
+      updatePagination();
+      updateGrandTotal();
     }
 
-    function updateNotification(expiredCount, nearCount) {
-      const notif = document.getElementById("expiryNotification");
-      if (tableData.length === 0) {
-        notif.textContent = "No items added yet.";
-      } else {
-        let msg = "";
-        if (expiredCount > 0) msg += `⚠️ Expired items: ${expiredCount}. `;
-        if (nearCount   > 0) msg += `⏳ Near expiry items (less than 10 days): ${nearCount}.`;
-        if (!msg) msg = "All items are valid.";
-        notif.textContent = msg;
-      }
-    }
-
-    function editItem(idx) {
-      if (isViewOnly) { alert("View only mode!"); return; }
-      const item = tableData[idx];
-      if (!item) return;
-      editRow = idx;
-      document.getElementById("itemCode").value     = item.code;
-      document.getElementById("description").value  = item.desc;
-      document.getElementById("vendor").value       = item.vendor;
-      document.getElementById("cost").value         = item.cost;
-      document.getElementById("expiry").value       = item.expiry;
-      document.getElementById("qty").value          = item.qty;
-    }
-
-    function deleteItem(idx) {
-      if (isViewOnly) { alert("View only mode!"); return; }
-      if (!confirm("Delete this entry?")) return;
-      tableData.splice(idx,1);
+    // Delete item
+    function deleteItem(index) {
+      tableData.splice(index, 1);
       localStorage.setItem("portalData", JSON.stringify(tableData));
-      updateTable(currentPage);
+      updateTable();
     }
 
-    function sortTable(field) {
-      if (tableData.length === 0) return;
-      let sorted = [...tableData];
-      sorted.sort((a,b) => {
-        if (field === "cost" || field === "qty" || field === "days" || field === "total") {
-          return parseFloat(a[field]) - parseFloat(b[field]);
-        }
-        if (field === "expiry") {
-          return new Date(a.expiry) - new Date(b.expiry);
-        }
-        return a[field].toString().localeCompare(b[field].toString());
-      });
-      if (JSON.stringify(sorted) === JSON.stringify(tableData)) {
-        sorted.reverse();
-      }
-      tableData = sorted;
-      localStorage.setItem("portalData", JSON.stringify(tableData));
-      updateTable(1);
+    // Edit item
+    function editItem(index) {
+      const item = tableData[index];
+      document.getElementById("itemCode").value = item.ItemCode;
+      document.getElementById("description").value = item.Description;
+      document.getElementById("vendor").value = item.Vendor;
+      document.getElementById("cost").value = item.Cost;
+      document.getElementById("expiry").value = item.Expiry;
+      document.getElementById("qty").value = item.Qty;
+      editRow = document.querySelector(`[data-index='${index}']`);
     }
 
-    function renderPagination() {
-      const pagDiv = document.getElementById("pagination");
-      pagDiv.innerHTML = "";
-      const pageCount = Math.ceil(tableData.length / itemsPerPage);
-      if (pageCount <= 1) return;
-      for(let i=1; i<=pageCount; i++) {
-        const btn = document.createElement("button");
-        btn.textContent = i;
-        if (i === currentPage) btn.classList.add("active");
-        btn.onclick = () => updateTable(i);
-        pagDiv.appendChild(btn);
+    // Update pagination
+    function updatePagination() {
+      const totalPages = Math.ceil(tableData.length / itemsPerPage);
+      const pagination = document.getElementById("pagination");
+      pagination.innerHTML = "";
+      for (let i = 1; i <= totalPages; i++) {
+        const button = document.createElement("button");
+        button.textContent = i;
+        button.className = currentPage === i ? "active" : "";
+        button.onclick = function () {
+          currentPage = i;
+          updateTable();
+        };
+        pagination.appendChild(button);
       }
     }
 
-    function renderVendorReport() {
-      const container = document.getElementById("vendorReport");
-      if (tableData.length === 0) {
-        container.innerHTML = "<p>No data to generate report.</p>";
-        return;
-      }
-      const vendorMap = {};
-      let expiredCount = 0, nearExpiryCount = 0;
-
-      tableData.forEach(item => {
-        if (!vendorMap[item.vendor]) vendorMap[item.vendor] = { count:0, total:0 };
-        vendorMap[item.vendor].count++;
-        vendorMap[item.vendor].total += parseFloat(item.total) || 0;
-        if (item.days <= 0) expiredCount++;
-        else if (item.days < 10) nearExpiryCount++;
-      });
-
-      let html = `<table><thead><tr><th>Vendor</th><th>Total Items</th><th>Total Value</th></tr></thead><tbody>`;
-      for (const v in vendorMap) {
-        html += `<tr><td>${v}</td><td>${vendorMap[v].count}</td><td>${vendorMap[v].total.toFixed(2)}</td></tr>`;
-      }
-      html += `</tbody></table>`;
-      html += `<p><strong>Expired Items:</strong> ${expiredCount}</p>`;
-      html += `<p><strong>Near Expiry Items (less than 10 days):</strong> ${nearExpiryCount}</p>`;
-
-      container.innerHTML = html;
+    // Update grand total
+    function updateGrandTotal() {
+      const total = tableData.reduce((sum, row) => sum + parseFloat(row.Total || 0), 0);
+      document.getElementById("grandTotal").textContent = `Grand Total: ${total.toFixed(2)}`;
     }
 
-    function printVendorReport() {
-      const reportContent = document.getElementById("vendorReport").innerHTML;
-      const newWin = window.open("");
-      newWin.document.write(`
-        <html><head><title>Vendor Report</title>
-        <style> body { font-family: Arial, sans-serif; margin:20px; } table { width:100%; border-collapse: collapse; margin-bottom:20px;} th, td { border:1px solid #ccc; padding:10px; text-align:left; } th { background:#eee; } </style>
-        </head><body>${reportContent}</body></html>`);
-      newWin.document.close();
-      newWin.focus();
-      newWin.print();
-      newWin.close();
-    }
-
+    // Share the table as read-only
     function shareTable() {
-      if (tableData.length === 0) { alert("No data to share!"); return; }
-      const encoded = btoa(encodeURIComponent(JSON.stringify(tableData)));
-      const url = `${location.origin}${location.pathname}?data=${encoded}`;
-      prompt("Share this URL (read‑only view):", url);
+      alert("Table shared as view-only!");
     }
 
-    function loadFromURL() {
-      const params  = new URLSearchParams(window.location.search);
-      const encoded = params.get("data");
-      if (encoded) {
-        try {
-          const decoded = decodeURIComponent(atob(encoded));
-          const arr = JSON.parse(decoded);
-          if (Array.isArray(arr)) {
-            tableData    = arr;
-            isViewOnly    = true;
-            document.querySelectorAll("input, button").forEach(el => el.disabled = true);
-            updateTable();
-            document.getElementById("expiryNotification").textContent = "View‑only mode (shared data). Editing disabled.";
-          }
-        } catch(e) {
-          console.warn("Failed to load shared data:", e);
-        }
+    // Print Vendor Report
+    function printVendorReport() {
+      const vendorData = {};
+      tableData.forEach(item => {
+        if (!vendorData[item.Vendor]) vendorData[item.Vendor] = [];
+        vendorData[item.Vendor].push(item);
+      });
+      
+      let reportHtml = "<table><thead><tr><th>Vendor</th><th>Total Cost</th><th>Item List</th></tr></thead><tbody>";
+      for (let vendor in vendorData) {
+        const items = vendorData[vendor];
+        const totalCost = items.reduce((sum, item) => sum + item.Total, 0).toFixed(2);
+        const itemList = items.map(i => i.Description).join("<br>");
+        reportHtml += `<tr><td>${vendor}</td><td>${totalCost}</td><td>${itemList}</td></tr>`;
       }
+      reportHtml += "</tbody></table>";
+
+      const newWin = window.open("", "_blank");
+      newWin.document.write(reportHtml);
+      newWin.document.close();
     }
 
-    // On load
-    loadFromURL();
-    loadDatabase();
+    loadDatabase(); // Load data initially
   </script>
 </body>
 </html>
